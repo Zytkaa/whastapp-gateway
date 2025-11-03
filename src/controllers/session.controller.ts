@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import sessionService from '../services/session.service';
 import logger from '../config/logger';
+import { sanitizeSessionId } from '../utils/validation';
 
 export const createSession = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -9,6 +10,14 @@ export const createSession = async (req: Request, res: Response): Promise<void> 
 
     if (!sessionId || !name) {
       res.status(400).json({ error: 'sessionId and name are required' });
+      return;
+    }
+
+    // Validate session ID format
+    try {
+      sanitizeSessionId(sessionId);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
       return;
     }
 

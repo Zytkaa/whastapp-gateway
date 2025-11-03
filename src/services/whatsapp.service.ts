@@ -10,6 +10,7 @@ import QRCode from 'qrcode-terminal';
 import logger from '../config/logger';
 import path from 'path';
 import fs from 'fs';
+import { sanitizeSessionId } from '../utils/validation';
 
 interface SessionData {
   socket: WASocket | null;
@@ -30,13 +31,16 @@ class WhatsAppService {
   }
 
   async createSession(sessionId: string, onQR?: (qr: string) => void): Promise<SessionData> {
+    // Sanitize session ID to prevent path traversal
+    const sanitized = sanitizeSessionId(sessionId);
+    
     // Check if session already exists
-    if (this.sessions.has(sessionId)) {
-      logger.warn(`Session ${sessionId} already exists`);
-      return this.sessions.get(sessionId)!;
+    if (this.sessions.has(sanitized)) {
+      logger.warn(`Session ${sanitized} already exists`);
+      return this.sessions.get(sanitized)!;
     }
 
-    const sessionPath = path.join(this.sessionsDir, sessionId);
+    const sessionPath = path.join(this.sessionsDir, sanitized);
     
     // Create session directory
     if (!fs.existsSync(sessionPath)) {
@@ -52,7 +56,7 @@ class WhatsAppService {
       phoneNumber: null,
     };
 
-    this.sessions.set(sessionId, sessionData);
+    this.sessions.set(sanitized, sessionData);
 
     const socket = makeWASocket({
       auth: {
@@ -72,7 +76,7 @@ class WhatsAppService {
         sessionData.qrCode = qr;
         sessionData.status = 'qr';
         QRCode.generate(qr, { small: true });
-        logger.info(`QR Code generated for session ${sessionId}`);
+        logger.info(`QR Code generated for session ${sanitized}`);
         
         if (onQR) {
           onQR(qr);
@@ -82,19 +86,19 @@ class WhatsAppService {
       if (connection === 'close') {
         const shouldReconnect = (lastDisconnect?.error as Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
         
-        logger.info(`Connection closed for session ${sessionId}, reconnecting: ${shouldReconnect}`);
+        logger.info(`Connection closed for session ${sanitized}, reconnecting: ${shouldReconnect}`);
         
         if (shouldReconnect) {
           sessionData.status = 'connecting';
           await this.createSession(sessionId, onQR);
         } else {
           sessionData.status = 'disconnected';
-          this.sessions.delete(sessionId);
+          this.sessions.delete(sanitized);
         }
       } else if (connection === 'open') {
         sessionData.status = 'connected';
         sessionData.phoneNumber = socket.user?.id?.split(':')[0] || null;
-        logger.info(`Session ${sessionId} connected successfully`);
+        logger.info(`Session ${sanitized} connected successfully`);
       }
     });
 
@@ -112,7 +116,9 @@ class WhatsAppService {
   }
 
   async deleteSession(sessionId: string): Promise<boolean> {
-    const sessionData = this.sessions.get(sessionId);
+    // Sanitize session ID to prevent path traversal
+    const sanitized = sanitizeSessionId(sessionId);
+    const sessionData = this.sessions.get(sanitized);
     
     if (!sessionData) {
       return false;
@@ -123,20 +129,20 @@ class WhatsAppService {
       try {
         await sessionData.socket.logout();
       } catch (error) {
-        logger.error(`Error logging out session ${sessionId}:`, error);
+        logger.error(`Error logging out session ${sanitized}:`, error);
       }
     }
 
     // Remove from active sessions
-    this.sessions.delete(sessionId);
+    this.sessions.delete(sanitized);
 
     // Delete session files
-    const sessionPath = path.join(this.sessionsDir, sessionId);
+    const sessionPath = path.join(this.sessionsDir, sanitized);
     if (fs.existsSync(sessionPath)) {
       fs.rmSync(sessionPath, { recursive: true, force: true });
     }
 
-    logger.info(`Session ${sessionId} deleted successfully`);
+    logger.info(`Session ${sanitized} deleted successfully`);
     return true;
   }
 
